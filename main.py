@@ -144,6 +144,8 @@ if __name__ == "__main__":
 	parser.add_argument('--verbose', action='store_true', default=False, help='for evaluation')
 	parser.add_argument('--cuda', action='store_true', default=False)
 	parser.add_argument('--num_runs', default=10, type=int, help='when searching over seeds, do 10')
+	parser.add_argument('--transition_prior', default='laplace', type=str,
+						help='type of trans. prior {laplace, normal, prev_q}')
 	args = parser.parse_args()
 	assert not (args.random_search and args.betavae and not args.search_beta)
 	assert not ((args.random_search or args.random_seeds) and args.evaluate)

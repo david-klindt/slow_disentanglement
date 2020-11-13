@@ -36,6 +36,15 @@ def compute_cross_ent_normal(mu, logvar):
 def compute_ent_normal(logvar):
     return 0.5 * (logvar + np.log(2 * np.pi * np.e))
 
+def compute_kl_normals(mu0, mu1, logvar0, logvar1):
+    return logvar1 - logvar0 + (torch.exp(logvar0)**2 + (mu0 - mu1)**2) / (
+            2 * torch.exp(logvar1)**2) - .5
+
+def compute_cross_ent_normals(mu0, mu1, logvar0, logvar1):
+    kl = compute_kl_normals(mu0, mu1, logvar0, logvar1)
+    ent = compute_ent_normal(logvar0)
+    return kl + ent
+
 def compute_sparsity(mu, normed=True):
     # assume couples, compute normalized sparsity
     diff = mu[::2] - mu[1::2]
@@ -63,6 +72,7 @@ class Solver(object):
         self.gamma = args.gamma  # for kl to laplace
         self.rate_prior = args.rate_prior * torch.ones(
             1, requires_grad=False, device=self.device)
+        self.transition_prior = args.transition_prior
         params = []
 
         # for adam
@@ -98,19 +108,29 @@ class Solver(object):
     def compute_cross_ent_combined(self, mu, logvar):
         normal_entropy = compute_ent_normal(logvar)
         cross_ent_normal = compute_cross_ent_normal(mu, logvar)
-        # assuming couples, do Laplace both ways
+        # assuming couples, do Transition both ways
         mu0 = mu[::2]
         mu1 = mu[1::2]
         logvar0 = logvar[::2]
         logvar1 = logvar[1::2]
         rate_prior0 = self.rate_prior
         rate_prior1 = self.rate_prior
-        cross_ent_laplace = (
-            self.compute_cross_ent_laplace(mu0 - mu1, logvar0, rate_prior0) +
-            self.compute_cross_ent_laplace(mu1 - mu0, logvar1, rate_prior1))
+        if self.transition_prior == 'laplace':
+            cross_ent_trans = (
+                self.compute_cross_ent_laplace(mu0 - mu1, logvar0, rate_prior0) +
+                self.compute_cross_ent_laplace(mu1 - mu0, logvar1, rate_prior1))
+        elif self.transition_prior == 'normal':
+            fix_sd = torch.ones_like(logvar0) / self.rate_prior
+            cross_ent_trans = (
+                compute_cross_ent_normals(mu0, mu1, logvar0, fix_sd) +
+                compute_cross_ent_normals(mu1, mu0, logvar1, fix_sd))
+        elif self.transition_prior == 'prev_q':
+            cross_ent_trans = (
+                compute_cross_ent_normals(mu0, mu1, logvar0, logvar1) +
+                compute_cross_ent_normals(mu1, mu0, logvar1, logvar0))
         return [x.sum(1).mean(0, True) for x in [normal_entropy,
                                                  cross_ent_normal,
-                                                 cross_ent_laplace]]
+                                                 cross_ent_trans]]
 
     def train(self, writer):
         self.net_mode(train=True)
